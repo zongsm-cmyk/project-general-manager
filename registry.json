@@ -53,5 +53,11 @@
     "workspace_path": null,
     "target_conversation_id": null,
     "status": "UNCONFIGURED"
+  },
+  "COMMAND_BUS": {
+    "repository": "https://github.com/zongsm-cmyk/gm-command-bus",
+    "privacy": "PRIVATE",
+    "protocol": "GM_COMMAND_BUS_V1",
+    "status": "LIVE"
   }
 }
