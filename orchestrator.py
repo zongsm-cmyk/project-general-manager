@@ -126,11 +126,7 @@ async def handler(websocket):
                 pending_commands[command_id] = command
 
                 # Broadcast to extension (which runs in all tabs)
-                for client in connected_clients:
-                    try:
-                        await client.send(json.dumps(command))
-                    except websockets.exceptions.ConnectionClosed:
-                        pass
+                websockets.broadcast(connected_clients, json.dumps(command))
 
             elif msg_type == "ACK":
                 command_id = data.get("command_id")
@@ -154,16 +150,13 @@ async def handler(websocket):
 
                     # Return result to GM
                     # We broadcast this, extension will pick it up if it's the GM tab
-                    for client in connected_clients:
-                        try:
-                            await client.send(json.dumps({
-                                "type": "GM_RESULT",
-                                "command_id": command_id,
-                                "project_id": receipt["project_id"],
-                                "result": result_text
-                            }))
-                        except websockets.exceptions.ConnectionClosed:
-                            pass
+                    gm_result_msg = json.dumps({
+                        "type": "GM_RESULT",
+                        "command_id": command_id,
+                        "project_id": receipt["project_id"],
+                        "result": result_text
+                    })
+                    websockets.broadcast(connected_clients, gm_result_msg)
 
     except websockets.exceptions.ConnectionClosed:
         pass

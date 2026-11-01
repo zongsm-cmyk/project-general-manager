@@ -66,7 +66,7 @@ async def test_websocket_connection_and_command_flow(server):
 
             # 3. GitHub client acknowledges receipt
             await github_client.send(json.dumps({"type": "ACK", "command_id": command_id}))
-            time.sleep(0.5) # Wait for DB update
+            await asyncio.sleep(0.5) # Wait for DB update
 
             # Check Database for DELIVERED status
             conn = sqlite3.connect(DB_FILE)
