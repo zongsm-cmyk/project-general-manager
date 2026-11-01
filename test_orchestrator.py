@@ -294,6 +294,94 @@ async def test_unconfigured_project_rejection(server):
         assert err_msg["type"] == "GM_ERROR"
         assert "UNCONFIGURED" in err_msg["error"]
 
+@pytest.mark.asyncio
+async def test_protocol_contract_and_deduplication(server):
+    """
+    Test full PROJECT_MANAGER_V1 contract fields:
+    command_id, source, target_project, action, instruction, requires_reply.
+    Verify duplicate command_id is rejected by Loop Guard.
+    """
+    unique_cmd_id = "test-mandate-cmd-uuid-999"
+    contract_dispatch = {
+        "protocol": "PROJECT_MANAGER_V1",
+        "command_id": unique_cmd_id,
+        "source": "GENERAL_MANAGER",
+        "target_project": "GITHUB",
+        "action": "DISPATCH",
+        "instruction": "Confirm receipt of this test command.",
+        "requires_reply": True
+    }
+
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gm_client:
+        await gm_client.recv()  # CONFIG
+
+        async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gh_client:
+            await gh_client.recv()  # CONFIG
+
+            # 1. Dispatch contract command
+            await gm_client.send(json.dumps(contract_dispatch))
+
+            # 2. GitHub client receives EXECUTE with full contract fields
+            received = json.loads(await gh_client.recv())
+            assert received["type"] == "EXECUTE"
+            assert received["protocol"] == "PROJECT_MANAGER_V1"
+            assert received["command_id"] == unique_cmd_id
+            assert received["source"] == "GENERAL_MANAGER"
+            assert received["target_project"] == "GITHUB"
+            assert received["action"] == "DISPATCH"
+            assert received["instruction"] == "Confirm receipt of this test command."
+            assert received["requires_reply"] is True
+            await gm_client.recv()  # GM broadcast
+
+            # 3. Acknowledge and send result
+            await gh_client.send(json.dumps({"type": "ACK", "command_id": unique_cmd_id}))
+            await gh_client.send(json.dumps({"type": "RESULT", "command_id": unique_cmd_id, "result": "Receipt confirmed."}))
+            gm_result = json.loads(await gm_client.recv())
+            assert gm_result["type"] == "GM_RESULT"
+            assert gm_result["command_id"] == unique_cmd_id
+            assert gm_result["result"] == "Receipt confirmed."
+
+            # Consume the broadcast on github client as well
+            gh_res_broadcast = json.loads(await gh_client.recv())
+            assert gh_res_broadcast["type"] == "GM_RESULT"
+
+            # 4. Attempt to re-dispatch the exact same command_id
+            await gm_client.send(json.dumps(contract_dispatch))
+
+            # Loop Guard should block it; no new EXECUTE should reach GitHub client
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(gh_client.recv(), timeout=1.0)
+
+@pytest.mark.asyncio
+async def test_client_registration_and_reconnection(server):
+    """Verify extension registration and reconnect resilience."""
+    # Connect and Register
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as client:
+        await client.recv()  # CONFIG
+        await client.send(json.dumps({
+            "type": "REGISTER",
+            "client_type": "EXTENSION",
+            "conversation_id": "conv-test-reconnect"
+        }))
+        reg_response = json.loads(await client.recv())
+        assert reg_response["type"] == "REGISTERED"
+        assert reg_response["status"] == "OK"
+        assert reg_response["conversation_id"] == "conv-test-reconnect"
+
+    # Simulate abrupt disconnect and reconnect
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as client2:
+        cfg = json.loads(await client2.recv())
+        assert cfg["type"] == "CONFIG"
+        # Can register again cleanly
+        await client2.send(json.dumps({
+            "type": "REGISTER",
+            "client_type": "EXTENSION",
+            "conversation_id": "conv-test-reconnect"
+        }))
+        reg_response2 = json.loads(await client2.recv())
+        assert reg_response2["status"] == "OK"
+
+
 # -------------------------------------------------------------
 # 6. Multi-Project Routing Verification
 # -------------------------------------------------------------

@@ -29,6 +29,13 @@ function connectWebSocket() {
         console.log("[GM Integrator] Connected to Orchestrator at " + WS_URL);
         reconnectDelay = 2000;
         isReconnecting = false;
+
+        // Register client with current conversation ID
+        sendToOrchestrator({
+            type: "REGISTER",
+            client_type: "EXTENSION",
+            conversation_id: getConversationIdFromUrl()
+        });
     };
 
     ws.onmessage = (event) => {
@@ -313,24 +320,34 @@ function monitorGMCommands() {
 
                 if (jsonStr) {
                     const parsed = JSON.parse(jsonStr);
-                    // Format A: { protocol: "PROJECT_MANAGER_V1", commands: [ { target_project, instruction } ] }
+                    // Format A: { protocol: "PROJECT_MANAGER_V1", commands: [ { target_project, instruction, ... } ] }
                     if (Array.isArray(parsed.commands)) {
                         for (const cmd of parsed.commands) {
                             if (cmd.target_project && cmd.instruction) {
                                 sendToOrchestrator({
                                     type: "COMMAND_DISPATCH",
+                                    protocol: "PROJECT_MANAGER_V1",
+                                    command_id: cmd.command_id || undefined,
+                                    source: cmd.source || "GENERAL_MANAGER",
                                     target_project: cmd.target_project,
-                                    instruction: cmd.instruction
+                                    action: cmd.action || "DISPATCH",
+                                    instruction: cmd.instruction,
+                                    requires_reply: cmd.requires_reply !== undefined ? cmd.requires_reply : true
                                 });
                             }
                         }
                     }
-                    // Format B: { protocol: "PROJECT_MANAGER_V1", target_project: "...", instruction: "..." }
+                    // Format B: { protocol: "PROJECT_MANAGER_V1", target_project: "...", instruction: "...", ... }
                     else if (parsed.target_project && parsed.instruction) {
                         sendToOrchestrator({
                             type: "COMMAND_DISPATCH",
+                            protocol: "PROJECT_MANAGER_V1",
+                            command_id: parsed.command_id || undefined,
+                            source: parsed.source || "GENERAL_MANAGER",
                             target_project: parsed.target_project,
-                            instruction: parsed.instruction
+                            action: parsed.action || "DISPATCH",
+                            instruction: parsed.instruction,
+                            requires_reply: parsed.requires_reply !== undefined ? parsed.requires_reply : true
                         });
                     }
                 }

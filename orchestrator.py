@@ -9,6 +9,13 @@ import sqlite3
 import sys
 import websockets
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Configuration
 REGISTRY_FILE = "registry.json"
 LOCAL_REGISTRY_FILE = "registry.local.json"
@@ -234,15 +241,32 @@ async def handler(websocket):
                 continue
 
             msg_type = data.get("type")
+            # Support pure contract payloads where type is omitted but protocol/action indicate DISPATCH
+            if not msg_type and (data.get("protocol") == "PROJECT_MANAGER_V1" or data.get("action") == "DISPATCH"):
+                msg_type = "COMMAND_DISPATCH"
 
             if msg_type == "COMMAND_DISPATCH":
                 target_project = data.get("target_project")
                 instruction = data.get("instruction", "")
+                provided_command_id = data.get("command_id")
+                source = data.get("source", "GENERAL_MANAGER")
+                action = data.get("action", "DISPATCH")
+                requires_reply = data.get("requires_reply", True)
 
                 # Loop Guard 1: Detect system reports mistakenly re-dispatched
                 if "[SYSTEM REPORT - DO NOT EXECUTE" in instruction:
                     print("[LOOP GUARD] Ignored command containing system report tag.")
                     continue
+
+                # Loop Guard 2: Prevent duplicate command_id execution
+                if provided_command_id:
+                    existing_receipt = get_receipt(provided_command_id)
+                    if existing_receipt:
+                        print(f"[LOOP GUARD] Duplicate command_id '{provided_command_id[:8]}' already exists. Dropping duplicate dispatch.")
+                        continue
+                    command_id = str(provided_command_id)
+                else:
+                    command_id = str(uuid.uuid4())
 
                 registry = load_registry()
                 project_meta, error_msg = resolve_project(target_project, registry)
@@ -250,7 +274,7 @@ async def handler(websocket):
                 if error_msg:
                     print(f"[DISPATCH REJECTED] {error_msg}")
                     error_receipt = {
-                        "command_id": str(uuid.uuid4()),
+                        "command_id": command_id,
                         "project_id": str(target_project),
                         "conversation_id": "NONE",
                         "instruction_preview": instruction[:80],
@@ -264,21 +288,25 @@ async def handler(websocket):
                     save_receipt(error_receipt)
                     await safe_broadcast({
                         "type": "GM_ERROR",
+                        "protocol": "PROJECT_MANAGER_V1",
+                        "command_id": command_id,
                         "target_project": target_project,
                         "error": error_msg
                     })
                     continue
 
-                command_id = str(uuid.uuid4())
                 target_conversation_id = project_meta["target_conversation_id"]
 
                 command = {
                     "type": "EXECUTE",
+                    "protocol": "PROJECT_MANAGER_V1",
                     "command_id": command_id,
+                    "source": source,
                     "target_project": project_meta["key"],
                     "target_conversation_id": target_conversation_id,
                     "instruction": instruction,
-                    "action": "DISPATCH"
+                    "action": action,
+                    "requires_reply": requires_reply
                 }
 
                 receipt = {
@@ -296,8 +324,18 @@ async def handler(websocket):
                 save_receipt(receipt)
                 pending_commands[command_id] = command
 
-                print(f"[DISPATCH] Command {command_id[:8]} -> {project_meta['key']} (Conv: {target_conversation_id[:8]}...)")
+                print(f"[DISPATCH] Command {command_id[:8]} ({source}->{project_meta['key']}) [Action: {action}]")
                 await safe_broadcast(command)
+
+            elif msg_type == "REGISTER":
+                client_type = data.get("client_type", "UNKNOWN")
+                conv_id = data.get("conversation_id", "UNKNOWN")
+                print(f"[CLIENT REGISTER] Type: {client_type}, Conversation: {conv_id}")
+                await websocket.send(json.dumps({
+                    "type": "REGISTERED",
+                    "status": "OK",
+                    "conversation_id": conv_id
+                }))
 
             elif msg_type == "ACK":
                 command_id = data.get("command_id")
@@ -326,7 +364,9 @@ async def handler(websocket):
                     print(f"[RESULT] Command {command_id[:8]} completed by {receipt['project_id']}.")
                     gm_result_msg = {
                         "type": "GM_RESULT",
+                        "protocol": "PROJECT_MANAGER_V1",
                         "command_id": command_id,
+                        "source": receipt["project_id"],
                         "project_id": receipt["project_id"],
                         "result": result_text
                     }
