@@ -1,47 +1,56 @@
 {
   "GM": {
     "project_name": "المدير العام للمشاريع",
+    "workspace_path": "C:\\Users\\askgs\\Documents\\project-general-manager",
     "target_conversation_id": "6ae6dd41-105c-83e9-90ac-378e51c5e5af",
     "status": "ACTIVE"
   },
   "GITHUB": {
-    "project_name": "GitHub",
+    "project_name": "GitHub / First Dollar Engine",
+    "workspace_path": "C:\\Users\\askgs\\Documents\\FirstDollarEngine",
     "target_conversation_id": "6ae6e433-1550-83ea-aedc-461ec36d966d",
     "alternate_conversation_id": "6ae5f9d3-5700-83ea-8415-0b83886a78fd",
     "status": "ACTIVE"
   },
-  "ETSY": {
-    "project_name": "Etsy",
-    "target_conversation_id": null,
-    "status": "UNCONFIGURED"
-  },
   "GUMROAD": {
     "project_name": "Gumroad",
+    "workspace_path": "C:\\Users\\askgs\\Documents\\GUMROAD_CLI",
+    "target_conversation_id": null,
+    "status": "ACTIVE"
+  },
+  "OPEN_SOURCE_AI_TOOLS": {
+    "project_name": "Open-Source AI Tools",
+    "workspace_path": "C:\\Users\\askgs\\Documents\\OpenSource_Workflow",
+    "target_conversation_id": null,
+    "status": "ACTIVE"
+  },
+  "ETSY": {
+    "project_name": "Etsy",
+    "workspace_path": "C:\\Users\\askgs\\Documents\\ETSY_SCOPE_TO_CASH_RELEASE_20261028",
     "target_conversation_id": null,
     "status": "UNCONFIGURED"
   },
   "AFFILIATE_MARKETING": {
     "project_name": "Affiliate Marketing",
+    "workspace_path": null,
     "target_conversation_id": null,
     "status": "UNCONFIGURED"
   },
   "KAGGLE": {
     "project_name": "Kaggle",
+    "workspace_path": null,
     "target_conversation_id": null,
     "status": "UNCONFIGURED"
   },
   "ALFAROUQ": {
     "project_name": "ALFAROUQ",
-    "target_conversation_id": null,
-    "status": "UNCONFIGURED"
-  },
-  "OPEN_SOURCE_AI_TOOLS": {
-    "project_name": "Open-Source AI Tools",
+    "workspace_path": null,
     "target_conversation_id": null,
     "status": "UNCONFIGURED"
   },
   "SOCIAL_MEDIA": {
     "project_name": "Social Media",
+    "workspace_path": null,
     "target_conversation_id": null,
     "status": "UNCONFIGURED"
   }
