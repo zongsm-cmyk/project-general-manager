@@ -1,23 +1,20 @@
-// Background service worker for extension
-console.log("GM Integrator Background Service Worker Loaded.");
+// General Manager Project Integrator - Background Service Worker (Manifest V3)
+console.log("[GM Integrator] Background Service Worker Loaded.");
 
-// Background workers in Manifest V3 can become inactive. We set up an alarm
-// to ensure the service worker stays alive if needed for future central connection management.
+// Set up periodic alarm to ensure the MV3 worker stays responsive if needed
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("GM Integrator installed.");
-  chrome.alarms.create("keepAlive", { periodInMinutes: 1 });
+  console.log("[GM Integrator] Extension installed/updated.");
+  chrome.alarms.create("gm_keep_alive", { periodInMinutes: 1 });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "keepAlive") {
-    console.debug("GM Integrator: Service Worker Keep-Alive");
+  if (alarm.name === "gm_keep_alive") {
+    // Keep-alive pulse
   }
 });
 
-// Future-proofing: We can use the background script to relay messages
-// if we move the WebSocket connection out of the content scripts.
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.type === "PING") {
-        sendResponse({status: "PONG"});
-    }
+  if (request.type === "PING") {
+    sendResponse({ status: "PONG", timestamp: Date.now() });
+  }
 });

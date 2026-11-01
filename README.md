@@ -1,56 +1,118 @@
-# Project General Manager Integrator
+# Project General Manager Integrator (مركز القيادة الموحد)
 
-This repository contains the local orchestration layer designed to link a central "General Manager" ChatGPT conversation to multiple specific project conversations (e.g., GitHub, Etsy) within the same browser, avoiding the need for paid APIs.
+نظام تنسيق وتوجيه أوامر محلي يربط محادثة **«المدير العام للمشاريع»** في ChatGPT بمحادثات المشاريع المستقلة (مثل GitHub، Etsy، Kaggle، وغيرها) داخل نفس المتصفح دون الحاجة إلى OpenAI API مدفوع أو استهلاك حصص سحابية خارجية.
 
-> [!WARNING]
-> **Repository Visibility Alert**: This repository is currently set to **PUBLIC**.
-> Please change it to **PRIVATE** in your GitHub repository settings before adding any sensitive data or specific project prompts. Never commit session tokens or personal IDs.
+---
 
-## Architecture
+## 1. بنية النظام (Architecture)
 
-The system uses a combination of:
-1.  **Local Python WebSocket Server (`orchestrator.py`)**: Acts as a lightweight command router and loop guard, saving execution receipts in a local SQLite database (`receipts.db`).
-2.  **Custom Chrome Extension (Unpacked)**: A small script injected into `chatgpt.com` tabs that communicates with the local WebSocket server to read GM commands, execute them in target project tabs, and report results back.
+يتكون النظام من مكونين أساسيين متكاملين:
 
-## Setup Instructions
+1. **خادم التنسيق المحلي (`orchestrator.py`)**:
+   - مبني بلغة Python (مكتبة `websockets` و `sqlite3`).
+   - يرتبط محلياً فقط على واجهة Loopback (`127.0.0.1`) على المنفذ `8799`.
+   - يقوم بالتحقق من أصل الاتصال (`Origin Security`) لحماية الخادم من أي هجمات من صفحات ويب خارجية.
+   - يدير طابور الأوامر، ويفحص سجل المشاريع (`registry.json` و `registry.local.json`).
+   - يمنع الحلقات المتكررة (`Loop Guard`).
+   - يسجل جميع العمليات والإيصالات في قاعدة بيانات SQLite محلية (`receipts.db`).
+   - يستعيد المهام غير المكتملة تلقائياً عند إعادة التشغيل (`Task Recovery`).
 
-### 1. Python Server
-1. Ensure Python 3.10+ is installed.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Start the orchestrator server:
-   ```bash
-   python orchestrator.py
-   ```
-   *(The server runs securely bound to `127.0.0.1` on port `8799`)*
+2. **إضافة المتصفح (`extension/`)**:
+   - متوافقة تماماً مع معايير Google Chrome Manifest V3.
+   - تعمل كحلقة وصل داخل تبويبات `https://chatgpt.com/*`.
+   - تلتقط الأوامر البرمجية الصادرة من محادثة المدير العام وتوجهها عبر WebSocket إلى الخادم.
+   - تستقبل الأمر في تبويب المشروع المستهدف، وتحقنه في حقل الإدخال، وتنتظر اكتمال التوليد، ثم تعيد النتيجة إلى المدير العام.
+   - تحتوي على حماية تكرار (`Message Replay Guard`) وحماية ضد الحلقات (`Loop Guard`).
 
-### 2. Chrome Extension
-1. Open Google Chrome and navigate to `chrome://extensions/`.
-2. Enable **Developer mode** (toggle in the top right).
-3. Click **Load unpacked** and select the `extension` folder located in this repository.
+---
 
-### 3. Project Configuration
-1. Open `registry.json` in a text editor.
-2. Replace `PLEASE_REPLACE_WITH_REAL_ID` with the actual Conversation IDs of your target ChatGPT projects. You can find this ID in the URL of the chat (e.g., `chatgpt.com/c/THIS-IS-THE-ID`).
-3. Ensure the GM project ID is also correctly set.
+## 2. بروتوكول التواصل (Protocol V1)
 
-## Usage
-
-1. Start the Python server.
-2. Open Chrome and ensure the extension is active.
-3. Open your GM Chat and your Target Project Chats in separate tabs.
-4. When the GM AI generates a JSON block containing commands (matching the `PROJECT_MANAGER_V1` protocol), the extension will capture it, send it through the local socket, and the target tab will automatically execute the instruction and return the result.
-
-## Stopping the System
-
-- Stop the Python server by pressing `Ctrl+C` in the terminal.
-- The extension will automatically attempt to reconnect in the background and remain dormant until the server is restarted. If you wish to fully disable it, turn it off in `chrome://extensions/`.
-
-## Running Tests
-
-Run the automated test suite to verify the orchestration logic and loop prevention:
-```bash
-pytest test_orchestrator.py -v
+تخرج محادثة المدير العام الأوامر بصيغة JSON داخل كتلة كود:
+```json
+{
+  "protocol": "PROJECT_MANAGER_V1",
+  "commands": [
+    {
+      "target_project": "GITHUB",
+      "instruction": "فحص المستودع وحل الأعطال."
+    }
+  ]
+}
 ```
+
+تدفق الأمر:
+1. `COMMAND_DISPATCH` (من تبويب المدير العام إلى الخادم)
+2. `EXECUTE` (بث الأمر إلى تبويبات المشاريع مع معرّف المحادثة المحدد)
+3. `ACK` (تأكيد استلام فوري من التبويب المطابق)
+4. `RESULT` (إرسال الرد بعد اكتمال التوليد)
+5. `GM_RESULT` (إرجاع النتيجة إلى المدير العام وتضمين إيصال التنفيذ)
+
+---
+
+## 3. متطلبات التشغيل والبدء السريع
+
+### المتطلبات:
+- نظام Windows 10/11.
+- متصفح Google Chrome.
+- بيئة Python 3.10+ (تم تجهيز بيئة افتراضية مستقلة `.venv`).
+
+### خطوات التشغيل:
+
+#### أ. تشغيل الخادم
+انقر نقراً مزدوجاً على:
+```cmd
+start_gm.bat
+```
+يقوم هذا الملف تلقائياً بالتحقق من عدم وجود خادم قيد التشغيل على المنفذ 8799 لمنع التعارض، وتنشيط البيئة الافتراضية `.venv`، وتمرير السجلات إلى `orchestrator.log`.
+
+#### ب. إيقاف الخادم
+لإيقاف الخادم في أي وقت دون التأثير على أي مشاريع أخرى:
+```cmd
+stop_gm.bat
+```
+
+#### ج. تثبيت إضافة Chrome
+1. افتح متصفح Chrome واذهب إلى: `chrome://extensions/`.
+2. فعّل **وضع مطور البرامج (Developer mode)** في الزاوية العلوية اليمنى.
+3. اضغط على **تحميل إضافة غير مضغوطة (Load unpacked)**.
+4. اختر مجلد `extension` الموجود داخل مجلد المشروع:
+   `C:\Users\askgs\Documents\project-general-manager\extension`
+
+---
+
+## 4. سجل المشاريع (`registry.json`)
+
+| المشروع | المعرّف (Target Conversation ID) | الحالة |
+| :--- | :--- | :--- |
+| **المدير العام (GM)** | `6ae6dd41-105c-83e9-90ac-378e51c5e5af` | `ACTIVE` |
+| **GitHub** | `6ae6e433-1550-83ea-aedc-461ec36d966d` | `ACTIVE` |
+| **Etsy** | غير محدد | `UNCONFIGURED` |
+| **Gumroad** | غير محدد | `UNCONFIGURED` |
+| **Affiliate Marketing** | غير محدد | `UNCONFIGURED` |
+| **Kaggle** | غير محدد | `UNCONFIGURED` |
+| **ALFAROUQ** | غير محدد | `UNCONFIGURED` |
+| **Open-Source AI Tools** | غير محدد | `UNCONFIGURED` |
+| **Social Media** | غير محدد | `UNCONFIGURED` |
+
+> [!NOTE]
+> المشاريع في حالة `UNCONFIGURED` يمنع الخادم توجيه الأوامر إليها تلقائياً حتى يتم إسناد معرّف المحادثة الصحيح لها.
+> لحفظ معرّفاتك الخاصة دون رفعها إلى GitHub، يمكنك إنشاء ملف محلي `registry.local.json` (وهو مستبعد تلقائياً في `.gitignore`).
+
+---
+
+## 5. تشغيل الاختبارات المؤتمتة
+
+تم بناء واجتياز حزمة اختبارات شاملة تغطي كافة السيناريوهات الهندسية:
+```bash
+.\.venv\Scripts\pytest.exe -v
+```
+تشمل الاختبارات:
+- سلامة معايير Manifest V3 وصحة JavaScript.
+- عمليات قاعدة بيانات SQLite واستعادة المهام بعد انقطاع الخادم.
+- دورة الأمر الكاملة (Dispatch -> ACK -> Result).
+- حماية منع الحلقات (`Loop Guard`).
+- رفض الأوامر للمشاريع غير المهيأة (`UNCONFIGURED`).
+- توجيه الأوامر لعدة مشاريع دون اختلاط السياقات (`Multi-Project Routing`).
+- رفض الاتصالات غير المصرح بها (`Origin Security`).
+- سلامة نصوص التشغيل والإيقاف على Windows واستهلاك الموارد.

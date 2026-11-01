@@ -1,110 +1,434 @@
 import asyncio
 import json
+import multiprocessing
+import os
 import sqlite3
+import subprocess
+import time
 import pytest
 import websockets
-import multiprocessing
-import time
-import os
 
-from orchestrator import main, DB_FILE
+import orchestrator
+from orchestrator import (
+    main, init_db, save_receipt, get_receipt, load_registry,
+    resolve_project, recover_pending_tasks, pending_commands,
+    DB_FILE, LOCAL_REGISTRY_FILE
+)
 
-def run_server():
-    asyncio.run(main())
+TEST_PORT = 8798
+TEST_URI = f"ws://127.0.0.1:{TEST_PORT}"
+
+def run_test_server():
+    """Runs orchestrator server on a dedicated test port."""
+    os.environ["GM_ORCHESTRATOR_PORT"] = str(TEST_PORT)
+    asyncio.run(main(host="127.0.0.1", port=TEST_PORT))
 
 @pytest.fixture(scope="module")
 def server():
-    # Start the orchestrator in a separate process
     if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
+        try:
+            os.remove(DB_FILE)
+        except Exception:
+            pass
 
-    p = multiprocessing.Process(target=run_server)
+    p = multiprocessing.Process(target=run_test_server)
+    p.daemon = True
     p.start()
-    time.sleep(1) # Wait for server to start
+    time.sleep(1.2)  # Allow server to bind and start listening
     yield
     p.terminate()
-    p.join()
+    p.join(timeout=2)
     if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
+        try:
+            os.remove(DB_FILE)
+        except Exception:
+            pass
+    if os.path.exists(LOCAL_REGISTRY_FILE):
+        try:
+            os.remove(LOCAL_REGISTRY_FILE)
+        except Exception:
+            pass
 
+# -------------------------------------------------------------
+# 1. Chrome Extension & Manifest Verification
+# -------------------------------------------------------------
+def test_chrome_extension_manifest():
+    manifest_path = os.path.join(os.path.dirname(__file__), "extension", "manifest.json")
+    assert os.path.exists(manifest_path), "manifest.json does not exist"
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    assert manifest.get("manifest_version") == 3
+    assert manifest.get("name") == "General Manager Project Integrator"
+    assert "https://chatgpt.com/*" in manifest.get("host_permissions", [])
+
+    # Check background worker file
+    bg_file = manifest.get("background", {}).get("service_worker")
+    assert bg_file, "Service worker missing in manifest"
+    bg_path = os.path.join(os.path.dirname(__file__), "extension", bg_file)
+    assert os.path.exists(bg_path), f"Background service worker file not found at {bg_path}"
+
+    # Check content script file
+    cs_list = manifest.get("content_scripts", [])
+    assert len(cs_list) > 0, "No content scripts declared"
+    cs_file = cs_list[0].get("js", [])[0]
+    cs_path = os.path.join(os.path.dirname(__file__), "extension", cs_file)
+    assert os.path.exists(cs_path), f"Content script file not found at {cs_path}"
+
+def test_extension_javascript_syntax():
+    """Verify JavaScript syntax of background.js and content.js using node."""
+    for script_name in ["background.js", "content.js"]:
+        path = os.path.join(os.path.dirname(__file__), "extension", script_name)
+        result = subprocess.run(["node", "--check", path], capture_output=True, text=True)
+        assert result.returncode == 0, f"Syntax error in {script_name}: {result.stderr}"
+
+# -------------------------------------------------------------
+# 2. SQLite Database & Storage
+# -------------------------------------------------------------
+def test_database_operations():
+    init_db()
+    test_id = "test-cmd-001"
+    receipt = {
+        "command_id": test_id,
+        "project_id": "GITHUB",
+        "conversation_id": "test-conv-123",
+        "instruction_preview": "Test database write",
+        "created_at": "2026-11-01T12:00:00Z",
+        "dispatched_at": "",
+        "delivery_status": "PENDING",
+        "execution_status": "PENDING",
+        "result_received_at": "",
+        "error_details": ""
+    }
+    save_receipt(receipt)
+    fetched = get_receipt(test_id)
+    assert fetched is not None
+    assert fetched["command_id"] == test_id
+    assert fetched["delivery_status"] == "PENDING"
+    assert fetched["execution_status"] == "PENDING"
+
+    # Update receipt
+    receipt["delivery_status"] = "DELIVERED"
+    receipt["execution_status"] = "COMPLETED"
+    save_receipt(receipt)
+    updated = get_receipt(test_id)
+    assert updated["delivery_status"] == "DELIVERED"
+    assert updated["execution_status"] == "COMPLETED"
+
+def test_task_recovery():
+    init_db()
+    uncompleted_id = "test-cmd-recoverable"
+    receipt = {
+        "command_id": uncompleted_id,
+        "project_id": "GITHUB",
+        "conversation_id": "test-conv-123",
+        "instruction_preview": "Recoverable task",
+        "created_at": "2026-11-01T12:00:00Z",
+        "dispatched_at": "",
+        "delivery_status": "PENDING",
+        "execution_status": "PENDING",
+        "result_received_at": "",
+        "error_details": ""
+    }
+    save_receipt(receipt)
+    recovered = recover_pending_tasks()
+    assert recovered >= 1
+    assert uncompleted_id in pending_commands
+
+# -------------------------------------------------------------
+# 3. Registry & Project Resolution
+# -------------------------------------------------------------
+def test_registry_resolution():
+    reg = load_registry()
+    assert "GM" in reg
+    assert "GITHUB" in reg
+
+    # Active project resolution
+    meta, err = resolve_project("GITHUB", reg)
+    assert err is None
+    assert meta["key"] == "GITHUB"
+    assert meta["target_conversation_id"] == "6ae6e433-1550-83ea-aedc-461ec36d966d"
+
+    # Unconfigured project resolution
+    meta_etsy, err_etsy = resolve_project("ETSY", reg)
+    assert meta_etsy is None
+    assert "UNCONFIGURED" in err_etsy
+
+    # Non-existent project
+    meta_none, err_none = resolve_project("NON_EXISTENT_PROJECT", reg)
+    assert meta_none is None
+    assert "not found" in err_none
+
+    # Alias check
+    meta_social, err_social = resolve_project("SOCIAL_MEDIA_MANAGEMENT", reg)
+    assert err_social is not None  # It resolves to SOCIAL_MEDIA which is UNCONFIGURED
+    assert "SOCIAL_MEDIA" in err_social
+
+# -------------------------------------------------------------
+# 4. WebSocket Full Lifecycle & Routing
+# -------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_websocket_connection_and_command_flow(server):
-    uri = "ws://127.0.0.1:8799"
+async def test_full_command_lifecycle(server):
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gm_client:
+        # 1. GM receives initial CONFIG
+        config_msg = json.loads(await gm_client.recv())
+        assert config_msg["type"] == "CONFIG"
+        assert config_msg["gm_conversation_id"] == "6ae6dd41-105c-83e9-90ac-378e51c5e5af"
 
-    # Client 1: GM Chat Simulator
-    async with websockets.connect(uri) as gm_client:
-        # Client 2: GitHub Chat Simulator
-        async with websockets.connect(uri) as github_client:
+        async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as github_client:
+            await github_client.recv()  # Consume CONFIG greeting
 
-            # 1. GM sends a dispatch command
+            # 2. GM dispatches a command to GITHUB
             dispatch_msg = {
                 "type": "COMMAND_DISPATCH",
                 "target_project": "GITHUB",
-                "instruction": "Fix the bugs."
+                "instruction": "Run code inspection."
             }
             await gm_client.send(json.dumps(dispatch_msg))
 
-            # 2. Both clients should receive the broadcasted EXECUTE command
-            # The GitHub client checks it and sees it's for them.
-            github_recv = json.loads(await github_client.recv())
-            assert github_recv["type"] == "EXECUTE"
-            assert github_recv["target_project"] == "GITHUB"
-            command_id = github_recv["command_id"]
+            # 3. GitHub client receives EXECUTE broadcast
+            recv_cmd = json.loads(await github_client.recv())
+            assert recv_cmd["type"] == "EXECUTE"
+            assert recv_cmd["target_project"] == "GITHUB"
+            command_id = recv_cmd["command_id"]
 
-            # (GM client also receives the broadcast, which its content.js would ignore since its conversation_id doesn't match)
-            gm_recv = json.loads(await gm_client.recv())
-            assert gm_recv["command_id"] == command_id
+            # Also GM client receives broadcast (its content.js filters it out by conversation_id)
+            gm_broadcast = json.loads(await gm_client.recv())
+            assert gm_broadcast["command_id"] == command_id
 
-            # Check Database for PENDING receipt
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute("SELECT delivery_status, execution_status FROM receipts WHERE command_id=?", (command_id,))
-            row = cursor.fetchone()
-            assert row[0] == "PENDING"
-            assert row[1] == "PENDING"
-            conn.close()
-
-            # 3. GitHub client acknowledges receipt
+            # 4. GitHub client sends ACK
             await github_client.send(json.dumps({"type": "ACK", "command_id": command_id}))
-            await asyncio.sleep(0.5) # Wait for DB update
+            await asyncio.sleep(0.3)
 
-            # Check Database for DELIVERED status
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute("SELECT delivery_status FROM receipts WHERE command_id=?", (command_id,))
-            assert cursor.fetchone()[0] == "DELIVERED"
-            conn.close()
+            receipt = get_receipt(command_id)
+            assert receipt["delivery_status"] == "DELIVERED"
 
-            # 4. GitHub client sends RESULT
+            # 5. GitHub client sends RESULT
             await github_client.send(json.dumps({
                 "type": "RESULT",
                 "command_id": command_id,
-                "result": "Bugs fixed successfully."
+                "result": "Code inspection completed: 0 errors."
             }))
 
-            # 5. GM client should receive GM_RESULT
-            gm_result = json.loads(await gm_client.recv())
-            assert gm_result["type"] == "GM_RESULT"
-            assert gm_result["result"] == "Bugs fixed successfully."
+            # 6. GM receives GM_RESULT
+            gm_res = json.loads(await gm_client.recv())
+            assert gm_res["type"] == "GM_RESULT"
+            assert gm_res["command_id"] == command_id
+            assert "0 errors" in gm_res["result"]
 
-            # 6. Check Database for COMPLETED status
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute("SELECT execution_status FROM receipts WHERE command_id=?", (command_id,))
-            assert cursor.fetchone()[0] == "COMPLETED"
-            conn.close()
+            receipt_completed = get_receipt(command_id)
+            assert receipt_completed["execution_status"] == "COMPLETED"
 
-            # 7. Test Loop Prevention (Sending RESULT again should be ignored)
-            # Send same result again
+# -------------------------------------------------------------
+# 5. Loop Guard & Error Handling Tests
+# -------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_loop_guard_duplicate_result(server):
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gm_client:
+        await gm_client.recv()  # CONFIG
+
+        async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as github_client:
+            await github_client.recv()  # CONFIG
+
+            # Dispatch command
+            await gm_client.send(json.dumps({
+                "type": "COMMAND_DISPATCH",
+                "target_project": "GITHUB",
+                "instruction": "Test loop guard."
+            }))
+            cmd = json.loads(await github_client.recv())
+            command_id = cmd["command_id"]
+            await gm_client.recv()  # GM receives broadcast
+
+            # Send first RESULT
             await github_client.send(json.dumps({
                 "type": "RESULT",
                 "command_id": command_id,
-                "result": "Bugs fixed successfully (duplicate)."
+                "result": "Done."
+            }))
+            gm_res = json.loads(await gm_client.recv())
+            assert gm_res["type"] == "GM_RESULT"
+
+            # Send duplicate RESULT
+            await github_client.send(json.dumps({
+                "type": "RESULT",
+                "command_id": command_id,
+                "result": "Done again (duplicate)."
             }))
 
-            # We expect no new broadcast. We can test this by waiting with a short timeout.
-            try:
+            # Verify no second GM_RESULT is broadcast
+            with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(gm_client.recv(), timeout=1.0)
-                assert False, "Received a GM_RESULT broadcast when it should have been blocked by loop guard"
-            except asyncio.TimeoutError:
-                pass # Expected
+
+@pytest.mark.asyncio
+async def test_loop_guard_system_report_ignored(server):
+    """Ensure a message tagged [SYSTEM REPORT - DO NOT EXECUTE] is never dispatched."""
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gm_client:
+        await gm_client.recv()  # CONFIG
+
+        # Attempt to dispatch system report
+        await gm_client.send(json.dumps({
+            "type": "COMMAND_DISPATCH",
+            "target_project": "GITHUB",
+            "instruction": "[SYSTEM REPORT - DO NOT EXECUTE - JUST ACKNOWLEDGE AND SUMMARIZE] output text"
+        }))
+
+        # No command should be broadcast
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(gm_client.recv(), timeout=1.0)
+
+@pytest.mark.asyncio
+async def test_unconfigured_project_rejection(server):
+    async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gm_client:
+        await gm_client.recv()  # CONFIG
+
+        # Dispatch to UNCONFIGURED project ETSY
+        await gm_client.send(json.dumps({
+            "type": "COMMAND_DISPATCH",
+            "target_project": "ETSY",
+            "instruction": "Publish new listing."
+        }))
+
+        # Expect GM_ERROR broadcast
+        err_msg = json.loads(await gm_client.recv())
+        assert err_msg["type"] == "GM_ERROR"
+        assert "UNCONFIGURED" in err_msg["error"]
+
+# -------------------------------------------------------------
+# 6. Multi-Project Routing Verification
+# -------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_multi_project_routing(server):
+    """
+    Simulate 3 project tabs simultaneously:
+    - GM (Command Center)
+    - GITHUB (Target A)
+    - KAGGLE_CONFIGURED (Target B via local override)
+    Verify messages only execute in the designated project.
+    """
+    # Write a temporary active project to registry.local.json
+    local_override = {
+        "KAGGLE_TEST": {
+            "project_name": "Kaggle Test",
+            "target_conversation_id": "conv-kaggle-test-uuid",
+            "status": "ACTIVE"
+        }
+    }
+    with open(LOCAL_REGISTRY_FILE, "w", encoding="utf-8") as f:
+        json.dump(local_override, f)
+
+    try:
+        async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as gm_client:
+            await gm_client.recv()  # CONFIG
+
+            async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as github_client:
+                await github_client.recv()  # CONFIG
+
+                async with websockets.connect(TEST_URI, origin="https://chatgpt.com") as kaggle_client:
+                    await kaggle_client.recv()  # CONFIG
+
+                    # Send command strictly targeting KAGGLE_TEST
+                    await gm_client.send(json.dumps({
+                        "type": "COMMAND_DISPATCH",
+                        "target_project": "KAGGLE_TEST",
+                        "instruction": "Submit model predictions."
+                    }))
+
+                    # Read broadcast on both clients
+                    msg_gh = json.loads(await github_client.recv())
+                    msg_kg = json.loads(await kaggle_client.recv())
+                    await gm_client.recv()  # GM broadcast
+
+                    assert msg_gh["target_project"] == "KAGGLE_TEST"
+                    assert msg_kg["target_project"] == "KAGGLE_TEST"
+                    assert msg_kg["target_conversation_id"] == "conv-kaggle-test-uuid"
+
+                    # Only Kaggle client matches conversation ID and responds
+                    kaggle_cmd_id = msg_kg["command_id"]
+                    await kaggle_client.send(json.dumps({
+                        "type": "RESULT",
+                        "command_id": kaggle_cmd_id,
+                        "result": "Predictions submitted: Score 0.94"
+                    }))
+
+                    # GM receives the Kaggle result
+                    gm_result = json.loads(await gm_client.recv())
+                    assert gm_result["type"] == "GM_RESULT"
+                    assert gm_result["project_id"] == "KAGGLE_TEST"
+                    assert "Score 0.94" in gm_result["result"]
+    finally:
+        if os.path.exists(LOCAL_REGISTRY_FILE):
+            os.remove(LOCAL_REGISTRY_FILE)
+
+# -------------------------------------------------------------
+# 7. Origin Security Check
+# -------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_unauthorized_origin_rejected(server):
+    """Ensure random websites cannot connect to the local orchestrator."""
+    with pytest.raises(Exception):
+        async with websockets.connect(TEST_URI, origin="http://malicious-website.com") as ws:
+            await ws.recv()
+
+# -------------------------------------------------------------
+# 8. Windows Scripts Integrity
+# -------------------------------------------------------------
+def test_windows_scripts_exist():
+    base_dir = os.path.dirname(__file__)
+    start_bat = os.path.join(base_dir, "start_gm.bat")
+    stop_bat = os.path.join(base_dir, "stop_gm.bat")
+
+    assert os.path.exists(start_bat), "start_gm.bat not found"
+    assert os.path.exists(stop_bat), "stop_gm.bat not found"
+
+    with open(start_bat, "r", encoding="utf-8") as f:
+        content = f.read()
+        assert "8799" in content
+        assert ".venv" in content
+        assert "orchestrator.log" in content
+
+    with open(stop_bat, "r", encoding="utf-8") as f:
+        content = f.read()
+        assert "8799" in content
+        assert "taskkill" in content
+
+# -------------------------------------------------------------
+# 9. Server Port Lifecycle & Resource Usage
+# -------------------------------------------------------------
+def test_server_port_lifecycle_and_resources():
+    import socket
+    import sys
+
+    py_exe = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
+    script = os.path.join(os.path.dirname(__file__), "orchestrator.py")
+
+    # Start orchestrator process on default port 8799
+    proc = subprocess.Popen([py_exe, script], cwd=os.path.dirname(__file__))
+    try:
+        time.sleep(1.5)
+
+        # Check port 8799 is open
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        res = s.connect_ex(("127.0.0.1", 8799))
+        s.close()
+        assert res == 0, "Port 8799 was not opened by orchestrator"
+
+        # Check resource usage via psutil or Windows tasklist
+        tasklist_res = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {proc.pid}", "/FO", "CSV"],
+            capture_output=True,
+            text=True
+        )
+        assert str(proc.pid) in tasklist_res.stdout, "Process was not found in tasklist"
+
+    finally:
+        proc.terminate()
+        proc.wait(timeout=3)
+
+    # Ensure port 8799 is released
+    time.sleep(0.5)
+    s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    res2 = s2.connect_ex(("127.0.0.1", 8799))
+    s2.close()
+    assert res2 != 0, "Port 8799 should be closed after process termination"
+
