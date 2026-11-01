@@ -14,6 +14,31 @@
     "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
     "status": "active"
   },
+  "AFFILIATE_MARKETING": {
+    "project_name": "Affiliate Marketing",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
+    "status": "active"
+  },
+  "KAGGLE": {
+    "project_name": "Kaggle",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
+    "status": "active"
+  },
+  "ALFAROUQ": {
+    "project_name": "ALFAROUQ",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
+    "status": "active"
+  },
+  "OPEN_SOURCE_AI_TOOLS": {
+    "project_name": "Open-Source AI Tools",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
+    "status": "active"
+  },
+  "SOCIAL_MEDIA_MANAGEMENT": {
+    "project_name": "Social Media Management",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
+    "status": "active"
+  },
   "GM": {
     "project_name": "المدير العام للمشاريع",
     "target_conversation_id": "6ae6dd41-105c-83e9-90ac-378e51c5e5af",
