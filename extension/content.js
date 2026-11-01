@@ -1,5 +1,5 @@
 let ws = null;
-const WS_URL = "ws://localhost:8765";
+const WS_URL = "ws://127.0.0.1:8799";
 
 // Wait for the DOM to be ready
 function connectWebSocket() {

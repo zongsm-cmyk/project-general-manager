@@ -172,9 +172,9 @@ async def handler(websocket):
 
 async def main():
     init_db()
-    print("Starting Orchestrator WebSocket server on ws://127.0.0.1:8765")
+    print("Starting Orchestrator WebSocket server on ws://127.0.0.1:8799")
     # Bind to localhost (127.0.0.1) only for security to prevent external access
-    async with websockets.serve(handler, "127.0.0.1", 8765):
+    async with websockets.serve(handler, "127.0.0.1", 8799):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":

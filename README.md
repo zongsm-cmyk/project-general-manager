@@ -24,7 +24,7 @@ The system uses a combination of:
    ```bash
    python orchestrator.py
    ```
-   *(The server runs securely bound to `127.0.0.1` on port `8765`)*
+   *(The server runs securely bound to `127.0.0.1` on port `8799`)*
 
 ### 2. Chrome Extension
 1. Open Google Chrome and navigate to `chrome://extensions/`.

@@ -29,7 +29,7 @@ def server():
 
 @pytest.mark.asyncio
 async def test_websocket_connection_and_command_flow(server):
-    uri = "ws://127.0.0.1:8765"
+    uri = "ws://127.0.0.1:8799"
 
     # Client 1: GM Chat Simulator
     async with websockets.connect(uri) as gm_client:
