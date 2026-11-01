@@ -1,0 +1,22 @@
+{
+  "GITHUB": {
+    "project_name": "GitHub / First Dollar Engine",
+    "target_conversation_id": "6ae6e433-1550-83ea-aedc-461ec36d966d",
+    "status": "active"
+  },
+  "ETSY": {
+    "project_name": "Etsy",
+    "target_conversation_id": "placeholder-etsy-id",
+    "status": "active"
+  },
+  "GUMROAD": {
+    "project_name": "Gumroad",
+    "target_conversation_id": "placeholder-gumroad-id",
+    "status": "active"
+  },
+  "GM": {
+    "project_name": "المدير العام للمشاريع",
+    "target_conversation_id": "6ae6dd41-105c-83e9-90ac-378e51c5e5af",
+    "status": "active"
+  }
+}

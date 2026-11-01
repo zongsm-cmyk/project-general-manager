@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "General Manager Project Integrator",
+  "version": "1.0",
+  "description": "Connects ChatGPT projects to the General Manager orchestrator via local WebSocket.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
