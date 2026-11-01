@@ -127,7 +127,10 @@ async def handler(websocket):
 
                 # Broadcast to extension (which runs in all tabs)
                 for client in connected_clients:
-                    await client.send(json.dumps(command))
+                    try:
+                        await client.send(json.dumps(command))
+                    except websockets.exceptions.ConnectionClosed:
+                        pass
 
             elif msg_type == "ACK":
                 command_id = data.get("command_id")
@@ -152,12 +155,15 @@ async def handler(websocket):
                     # Return result to GM
                     # We broadcast this, extension will pick it up if it's the GM tab
                     for client in connected_clients:
-                        await client.send(json.dumps({
-                            "type": "GM_RESULT",
-                            "command_id": command_id,
-                            "project_id": receipt["project_id"],
-                            "result": result_text
-                        }))
+                        try:
+                            await client.send(json.dumps({
+                                "type": "GM_RESULT",
+                                "command_id": command_id,
+                                "project_id": receipt["project_id"],
+                                "result": result_text
+                            }))
+                        except websockets.exceptions.ConnectionClosed:
+                            pass
 
     except websockets.exceptions.ConnectionClosed:
         pass
@@ -166,8 +172,9 @@ async def handler(websocket):
 
 async def main():
     init_db()
-    print("Starting Orchestrator WebSocket server on ws://localhost:8765")
-    async with websockets.serve(handler, "localhost", 8765):
+    print("Starting Orchestrator WebSocket server on ws://127.0.0.1:8765")
+    # Bind to localhost (127.0.0.1) only for security to prevent external access
+    async with websockets.serve(handler, "127.0.0.1", 8765):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":

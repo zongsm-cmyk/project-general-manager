@@ -6,12 +6,12 @@
   },
   "ETSY": {
     "project_name": "Etsy",
-    "target_conversation_id": "placeholder-etsy-id",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
     "status": "active"
   },
   "GUMROAD": {
     "project_name": "Gumroad",
-    "target_conversation_id": "placeholder-gumroad-id",
+    "target_conversation_id": "PLEASE_REPLACE_WITH_REAL_ID",
     "status": "active"
   },
   "GM": {
